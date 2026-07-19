@@ -240,17 +240,19 @@ function viewProjects() {
 
   v.querySelector("#newProject").onclick = () => {
     const box = v.querySelector("#newProjectBox");
-    box.innerHTML = '<input type="text" placeholder="Project name" style="margin-top:10px">';
+    box.innerHTML =
+      '<form><input type="text" placeholder="Project name" enterkeyhint="done" style="margin-top:10px">' +
+      '<button class="quiet-btn" type="submit">Create</button></form>';
     const input = box.querySelector("input");
     input.focus();
-    input.onkeydown = ev => {
-      if (ev.key === "Enter" && input.value.trim()) {
-        const d2 = db();
-        const p = { id: uid(), name: input.value.trim(), createdAt: new Date().toISOString() };
-        d2.projects.push(p);
-        saveDb(d2);
-        location.hash = "#/p/" + p.id;
-      }
+    box.querySelector("form").onsubmit = ev => {
+      ev.preventDefault();
+      if (!input.value.trim()) return;
+      const d2 = db();
+      const p = { id: uid(), name: input.value.trim(), createdAt: new Date().toISOString() };
+      d2.projects.push(p);
+      saveDb(d2);
+      location.hash = "#/p/" + p.id;
     };
   };
 
@@ -259,11 +261,12 @@ function viewProjects() {
     box.className = "keybox";
     box.innerHTML =
       '<p class="hint">Paste your Anthropic API key (from console.anthropic.com). It is stored only on this device.</p>' +
-      '<input type="password" placeholder="sk-ant-…" value="' + esc(apiKey()) + '">' +
-      '<button class="quiet-btn" id="saveKey">Save</button>';
+      '<form><input type="password" placeholder="sk-ant-…" enterkeyhint="done" value="' + esc(apiKey()) + '">' +
+      '<button class="quiet-btn" type="submit">Save</button></form>';
     const input = box.querySelector("input");
     input.focus();
-    box.querySelector("#saveKey").onclick = () => {
+    box.querySelector("form").onsubmit = ev => {
+      ev.preventDefault();
       const val = input.value.trim();
       if (val) localStorage.setItem(KEY_KEY, val);
       else localStorage.removeItem(KEY_KEY);
@@ -428,7 +431,7 @@ function viewAsk(projectId) {
     '<div class="chips">' +
       suggestions.map((s, i) => '<button data-i="' + i + '">' + esc(s) + "</button>").join("") +
     "</div>" +
-    '<input type="text" id="q" placeholder="Ask about your notes…">' +
+    '<form id="askForm"><input type="text" id="q" placeholder="Ask about your notes…" enterkeyhint="go"></form>' +
     "<div id='thread'>" +
       convo.map(t =>
         '<div class="qa"><div class="q">' + esc(t.q) + '</div><div class="a">' + esc(t.a) + "</div></div>"
@@ -468,7 +471,7 @@ function viewAsk(projectId) {
     }
   }
 
-  input.onkeydown = ev => { if (ev.key === "Enter") ask(input.value); };
+  v.querySelector("#askForm").onsubmit = ev => { ev.preventDefault(); ask(input.value); };
   v.querySelectorAll(".chips button").forEach(b => {
     b.onclick = () => ask(suggestions[Number(b.dataset.i)]);
   });
