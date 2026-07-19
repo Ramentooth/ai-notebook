@@ -141,7 +141,7 @@ function firstSentence(text) {
   const t = text.trim().replace(/\s+/g, " ");
   const m = t.match(/^.{10,}?[.!?](\s|$)/);
   const s = m ? m[0].trim() : t;
-  return s.length > 140 ? s.slice(0, 137) + "…" : s;
+  return s.length > 70 ? s.slice(0, 67) + "…" : s;
 }
 
 /* ---------- AI ---------- */
@@ -172,7 +172,7 @@ function summarizeInBackground(entryId) {
   const entry = d.entries.find(e => e.id === entryId);
   if (!entry || !apiKey()) return;
   claude(
-    "You summarize one practice-journal entry. Reply with exactly one short sentence: the single most useful, concrete takeaway the writer should remember. No preamble, no quotes, no bullet character.",
+    "You summarize one practice-journal entry. Reply with a very short fragment (under 8 words, not a full sentence) naming the single most useful, concrete takeaway the writer should remember. No preamble, no quotes, no bullet character, no trailing period.",
     [{ role: "user", content: entry.text }],
     200
   ).then(summary => {
