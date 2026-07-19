@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Notebook">
+<meta name="theme-color" content="#faf9f6">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" href="icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<title>My Notebook</title>
+<style>
+  :root {
+    --paper: #faf9f6;
+    --card: #ffffff;
+    --ink: #1c1b19;
+    --muted: #8a857c;
+    --faint: #b5b0a6;
+    --hairline: #e8e5df;
+    --accent: #c16a3e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #171614;
+      --card: #201f1c;
+      --ink: #eceae5;
+      --muted: #8f8a80;
+      --faint: #6b675f;
+      --hairline: #2c2a26;
+      --accent: #d07e52;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { background: var(--paper); color: var(--ink); }
+  body {
+    font: 17px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding: calc(env(safe-area-inset-top) + 18px) 20px calc(env(safe-area-inset-bottom) + 24px);
+    max-width: 640px; margin: 0 auto;
+    overscroll-behavior-y: contain;
+  }
+  h1, h2 { font-family: Georgia, "Times New Roman", serif; font-weight: 500; letter-spacing: -0.01em; }
+  h1 { font-size: 28px; margin: 10px 0 22px; }
+  h2 { font-size: 22px; margin: 10px 0 6px; }
+  a { color: inherit; text-decoration: none; }
+  button {
+    font: inherit; color: inherit; background: none; border: none; cursor: pointer;
+  }
+  .back { display: inline-block; color: var(--muted); font-size: 15px; padding: 4px 0; margin-bottom: 6px; }
+  .list-item {
+    display: block; padding: 15px 2px; border-bottom: 1px solid var(--hairline);
+    font-size: 19px; font-family: Georgia, serif;
+  }
+  .big-btn {
+    display: block; width: 100%; text-align: center;
+    padding: 15px; margin: 14px 0 6px;
+    background: var(--ink); color: var(--paper);
+    border-radius: 12px; font-size: 17px; font-weight: 600;
+  }
+  .quiet-btn { color: var(--muted); font-size: 15px; padding: 8px 0; }
+  .quiet-btn:disabled { opacity: .5; }
+  .row { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+  .day-label {
+    margin: 22px 0 4px; font-size: 13px; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--muted);
+  }
+  .entry-card { display: block; padding: 10px 2px 12px; border-bottom: 1px solid var(--hairline); }
+  .entry-card .bullet { display: flex; gap: 9px; }
+  .entry-card .bullet::before { content: "•"; color: var(--accent); }
+  textarea, input[type=text], input[type=password] {
+    width: 100%; font: inherit; color: var(--ink);
+    background: var(--card); border: 1px solid var(--hairline); border-radius: 12px;
+    padding: 13px 14px; outline: none;
+  }
+  textarea { min-height: 44vh; resize: none; line-height: 1.6; }
+  textarea:focus, input:focus { border-color: var(--faint); }
+  .hint { color: var(--muted); font-size: 14px; margin: 10px 0; }
+  .ai-question {
+    font-family: Georgia, serif; font-style: italic; font-size: 17px;
+    color: var(--ink); background: var(--card);
+    border-left: 3px solid var(--accent); border-radius: 0 10px 10px 0;
+    padding: 10px 14px; margin: 0 0 12px;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+  .chips button {
+    font-size: 14px; color: var(--muted);
+    border: 1px solid var(--hairline); border-radius: 999px; padding: 7px 13px;
+    background: var(--card);
+  }
+  .qa { margin: 18px 0; }
+  .qa .q { font-weight: 600; margin-bottom: 6px; }
+  .qa .a { white-space: pre-wrap; }
+  .entry-full { white-space: pre-wrap; font-size: 18px; line-height: 1.65; margin: 14px 0 26px; }
+  .takeaway { color: var(--muted); font-size: 15px; margin: 4px 0 8px; }
+  .footer { margin-top: 42px; display: flex; gap: 18px; }
+  .footer button, .footer a { color: var(--faint); font-size: 13px; }
+  .danger { color: #b5493a !important; }
+  .empty { color: var(--muted); font-family: Georgia, serif; font-style: italic; margin: 26px 0; }
+  .keybox { margin-top: 10px; }
+  .keybox input { margin: 8px 0; font-size: 14px; }
+  .fade { animation: fade .25s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; } }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+"use strict";
+
+/* ---------- store ---------- */
+
+const DB_KEY = "notebook.v1";
+const KEY_KEY = "notebook.apikey";
+
+function db() {
+  try { return JSON.parse(localStorage.getItem(DB_KEY)) || { projects: [], entries: [] }; }
+  catch { return { projects: [], entries: [] }; }
+}
+function saveDb(d) { localStorage.setItem(DB_KEY, JSON.stringify(d)); }
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+function apiKey() { return localStorage.getItem(KEY_KEY) || ""; }
+
+/* ---------- helpers ---------- */
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function dayLabel(iso) {
+  const d = new Date(iso), now = new Date();
+  const midnight = t => new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime();
+  const diff = Math.round((midnight(now) - midnight(d)) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  const opts = { month: "long", day: "numeric" };
+  if (d.getFullYear() !== now.getFullYear()) opts.year = "numeric";
+  return d.toLocaleDateString(undefined, opts);
+}
+function firstSentence(text) {
+  const t = text.trim().replace(/\s+/g, " ");
+  const m = t.match(/^.{10,}?[.!?](\s|$)/);
+  const s = m ? m[0].trim() : t;
+  return s.length > 140 ? s.slice(0, 137) + "…" : s;
+}
+
+/* ---------- AI ---------- */
+
+async function claude(system, messages, maxTokens) {
+  const key = apiKey();
+  if (!key) throw new Error("no-key");
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": key,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({ model: "claude-opus-4-8", max_tokens: maxTokens, system, messages }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || "Request failed (" + res.status + ")");
+  }
+  const data = await res.json();
+  return data.content.filter(b => b.type === "text").map(b => b.text).join("").trim();
+}
+
+function summarizeInBackground(entryId) {
+  const d = db();
+  const entry = d.entries.find(e => e.id === entryId);
+  if (!entry || !apiKey()) return;
+  claude(
+    "You summarize one practice-journal entry. Reply with exactly one short sentence: the single most useful, concrete takeaway the writer should remember. No preamble, no quotes, no bullet character.",
+    [{ role: "user", content: entry.text }],
+    200
+  ).then(summary => {
+    const d2 = db();
+    const e2 = d2.entries.find(e => e.id === entryId);
+    if (e2 && summary) { e2.summary = summary; saveDb(d2); render(); }
+  }).catch(() => {}); // fallback summary already in place
+}
+
+function notesContext(projectId) {
+  const entries = db().entries
+    .filter(e => e.projectId === projectId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return entries.map(e =>
+    "### " + new Date(e.createdAt).toDateString() + "\n" + e.text
+  ).join("\n\n");
+}
+
+/* ---------- router ---------- */
+
+const mem = { drafts: {}, deeper: {}, asks: {} }; // per-session state, keyed by project id
+
+function route() {
+  const h = location.hash.replace(/^#\/?/, "");
+  const p = h.split("/");
+  if (p[0] === "p" && p[1] && p[2] === "new") return viewNewEntry(p[1]);
+  if (p[0] === "p" && p[1] && p[2] === "ask") return viewAsk(p[1]);
+  if (p[0] === "p" && p[1]) return viewProject(p[1]);
+  if (p[0] === "e" && p[1]) return viewEntry(p[1]);
+  return viewProjects();
+}
+function render() {
+  const app = document.getElementById("app");
+  app.innerHTML = "";
+  app.appendChild(route());
+}
+window.addEventListener("hashchange", render);
+
+function el(html) {
+  const t = document.createElement("div");
+  t.className = "fade";
+  t.innerHTML = html;
+  return t;
+}
+
+/* ---------- screen 1: projects ---------- */
+
+function viewProjects() {
+  const d = db();
+  const items = d.projects.map(p =>
+    '<a class="list-item" href="#/p/' + p.id + '">' + esc(p.name) + "</a>"
+  ).join("");
+
+  const v = el(
+    "<h1>My Notebook</h1>" +
+    (items || '<p class="empty">A blank notebook. Add your first project.</p>') +
+    '<button class="quiet-btn" id="newProject" style="margin-top:16px">+ New Project</button>' +
+    '<div id="newProjectBox"></div>' +
+    '<div class="footer">' +
+      '<button id="keyBtn">' + (apiKey() ? "AI on · change key" : "Enable AI · add key") + "</button>" +
+      '<button id="exportBtn">Export</button>' +
+    "</div>" +
+    '<div id="keyBox"></div>'
+  );
+
+  v.querySelector("#newProject").onclick = () => {
+    const box = v.querySelector("#newProjectBox");
+    box.innerHTML = '<input type="text" placeholder="Project name" style="margin-top:10px">';
+    const input = box.querySelector("input");
+    input.focus();
+    input.onkeydown = ev => {
+      if (ev.key === "Enter" && input.value.trim()) {
+        const d2 = db();
+        const p = { id: uid(), name: input.value.trim(), createdAt: new Date().toISOString() };
+        d2.projects.push(p);
+        saveDb(d2);
+        location.hash = "#/p/" + p.id;
+      }
+    };
+  };
+
+  v.querySelector("#keyBtn").onclick = () => {
+    const box = v.querySelector("#keyBox");
+    box.className = "keybox";
+    box.innerHTML =
+      '<p class="hint">Paste your Anthropic API key (from console.anthropic.com). It is stored only on this device.</p>' +
+      '<input type="password" placeholder="sk-ant-…" value="' + esc(apiKey()) + '">' +
+      '<button class="quiet-btn" id="saveKey">Save</button>';
+    const input = box.querySelector("input");
+    input.focus();
+    box.querySelector("#saveKey").onclick = () => {
+      const val = input.value.trim();
+      if (val) localStorage.setItem(KEY_KEY, val);
+      else localStorage.removeItem(KEY_KEY);
+      render();
+    };
+  };
+
+  v.querySelector("#exportBtn").onclick = () => {
+    const blob = new Blob([JSON.stringify(db(), null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "notebook-backup.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  return v;
+}
+
+/* ---------- screen 2: project ---------- */
+
+function viewProject(projectId) {
+  const d = db();
+  const project = d.projects.find(p => p.id === projectId);
+  if (!project) { location.hash = "#/"; return el(""); }
+
+  const entries = d.entries
+    .filter(e => e.projectId === projectId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  let listHtml = "", lastLabel = "";
+  for (const e of entries) {
+    const label = dayLabel(e.createdAt);
+    if (label !== lastLabel) { listHtml += '<div class="day-label">' + esc(label) + "</div>"; lastLabel = label; }
+    listHtml += '<a class="entry-card" href="#/e/' + e.id + '"><span class="bullet"><span>' +
+      esc(e.summary || firstSentence(e.text)) + "</span></span></a>";
+  }
+
+  const v = el(
+    '<a class="back" href="#/">‹ My Notebook</a>' +
+    "<h1>" + esc(project.name) + "</h1>" +
+    '<a class="big-btn" href="#/p/' + projectId + '/new">+ New Entry</a>' +
+    '<div class="row"><span></span><a class="quiet-btn" href="#/p/' + projectId + '/ask">Ask AI</a></div>' +
+    (listHtml || '<p class="empty">No entries yet. How did practice go?</p>')
+  );
+  return v;
+}
+
+/* ---------- screen 3: new entry ---------- */
+
+function viewNewEntry(projectId) {
+  const project = db().projects.find(p => p.id === projectId);
+  if (!project) { location.hash = "#/"; return el(""); }
+
+  const questions = mem.deeper[projectId] || [];
+  const v = el(
+    '<a class="back" href="#/p/' + projectId + '">‹ ' + esc(project.name) + "</a>" +
+    "<h2>How did it go today?</h2>" +
+    '<div id="questions">' +
+      questions.map(q => '<div class="ai-question">' + esc(q) + "</div>").join("") +
+    "</div>" +
+    '<textarea id="draft" placeholder="Speak or type here"></textarea>' +
+    '<div class="row" style="margin-top:12px">' +
+      '<button class="quiet-btn" id="deeper">Prompt Me Deeper</button>' +
+      '<button class="big-btn" id="save" style="width:auto;margin:0;padding:12px 26px">Save</button>' +
+    "</div>" +
+    '<div class="hint" id="msg"></div>'
+  );
+
+  const ta = v.querySelector("#draft");
+  ta.value = mem.drafts[projectId] || "";
+  ta.oninput = () => { mem.drafts[projectId] = ta.value; };
+  if (!ta.value) setTimeout(() => ta.focus(), 50);
+
+  const msg = v.querySelector("#msg");
+  const deeperBtn = v.querySelector("#deeper");
+
+  deeperBtn.onclick = async () => {
+    if (!ta.value.trim()) { msg.textContent = "Write a little first — then I can ask a good question."; return; }
+    if (!apiKey()) { msg.textContent = "Add your API key on the home screen to enable AI."; return; }
+    deeperBtn.disabled = true;
+    deeperBtn.textContent = "Thinking…";
+    msg.textContent = "";
+    try {
+      const q = await claude(
+        "The user is journaling about a practice session. Ask ONE thoughtful, specific follow-up question that builds directly on what they wrote — the kind a great coach would ask. Never ask a generic question. Reply with only the question.",
+        [{ role: "user", content: ta.value }],
+        150
+      );
+      (mem.deeper[projectId] = mem.deeper[projectId] || []).push(q);
+      render();
+    } catch (e) {
+      msg.textContent = "Couldn't reach the AI: " + e.message;
+    }
+    deeperBtn.disabled = false;
+    deeperBtn.textContent = "Prompt Me Deeper";
+  };
+
+  v.querySelector("#save").onclick = () => {
+    const text = ta.value.trim();
+    if (!text) return;
+    const d = db();
+    const entry = {
+      id: uid(), projectId, text,
+      createdAt: new Date().toISOString(),
+      summary: firstSentence(text), // placeholder until AI summary lands
+    };
+    d.entries.push(entry);
+    saveDb(d);
+    delete mem.drafts[projectId];
+    delete mem.deeper[projectId];
+    location.hash = "#/p/" + projectId;
+    summarizeInBackground(entry.id);
+  };
+
+  return v;
+}
+
+/* ---------- entry detail ---------- */
+
+function viewEntry(entryId) {
+  const d = db();
+  const entry = d.entries.find(e => e.id === entryId);
+  if (!entry) { location.hash = "#/"; return el(""); }
+  const project = d.projects.find(p => p.id === entry.projectId);
+
+  const v = el(
+    '<a class="back" href="#/p/' + entry.projectId + '">‹ ' + esc(project ? project.name : "Back") + "</a>" +
+    "<h2>" + esc(dayLabel(entry.createdAt)) + "</h2>" +
+    '<p class="takeaway">• ' + esc(entry.summary || firstSentence(entry.text)) + "</p>" +
+    '<div class="entry-full">' + esc(entry.text) + "</div>" +
+    '<div class="footer"><button class="danger" id="del">Delete entry</button></div>'
+  );
+
+  v.querySelector("#del").onclick = () => {
+    if (!confirm("Delete this entry?")) return;
+    const d2 = db();
+    d2.entries = d2.entries.filter(e => e.id !== entryId);
+    saveDb(d2);
+    location.hash = "#/p/" + entry.projectId;
+  };
+  return v;
+}
+
+/* ---------- ask AI ---------- */
+
+function viewAsk(projectId) {
+  const project = db().projects.find(p => p.id === projectId);
+  if (!project) { location.hash = "#/"; return el(""); }
+
+  const convo = (mem.asks[projectId] = mem.asks[projectId] || []);
+  const suggestions = [
+    "What patterns do you notice?",
+    "What should I focus on today?",
+    "What advice have I already given myself?",
+    "What should I experiment with next?",
+  ];
+
+  const v = el(
+    '<a class="back" href="#/p/' + projectId + '">‹ ' + esc(project.name) + "</a>" +
+    "<h2>Ask AI</h2>" +
+    '<div class="chips">' +
+      suggestions.map((s, i) => '<button data-i="' + i + '">' + esc(s) + "</button>").join("") +
+    "</div>" +
+    '<input type="text" id="q" placeholder="Ask about your notes…">' +
+    "<div id='thread'>" +
+      convo.map(t =>
+        '<div class="qa"><div class="q">' + esc(t.q) + '</div><div class="a">' + esc(t.a) + "</div></div>"
+      ).join("") +
+    "</div>" +
+    '<div class="hint" id="msg"></div>'
+  );
+
+  const input = v.querySelector("#q");
+  const msg = v.querySelector("#msg");
+
+  async function ask(question) {
+    if (!question.trim()) return;
+    if (!apiKey()) { msg.textContent = "Add your API key on the home screen to enable AI."; return; }
+    const notes = notesContext(projectId);
+    if (!notes) { msg.textContent = "No entries yet — write one first."; return; }
+    msg.textContent = "Thinking…";
+    input.disabled = true;
+    try {
+      const history = convo.flatMap(t => [
+        { role: "user", content: t.q },
+        { role: "assistant", content: t.a },
+      ]);
+      const a = await claude(
+        'You are the AI inside the user\'s practice notebook for "' + project.name + '". ' +
+        "Answer using ONLY the notes below. Reference specific past entries naturally by their date " +
+        '(e.g. "On July 12 you noted…"). Be concrete and brief. If the notes don\'t cover it, say so plainly.\n\n' +
+        "NOTES:\n\n" + notes,
+        [...history, { role: "user", content: question }],
+        1500
+      );
+      convo.push({ q: question, a });
+      render();
+    } catch (e) {
+      msg.textContent = "Couldn't reach the AI: " + e.message;
+      input.disabled = false;
+    }
+  }
+
+  input.onkeydown = ev => { if (ev.key === "Enter") ask(input.value); };
+  v.querySelectorAll(".chips button").forEach(b => {
+    b.onclick = () => ask(suggestions[Number(b.dataset.i)]);
+  });
+
+  return v;
+}
+
+render();
+</script>
+</body>
+</html>
