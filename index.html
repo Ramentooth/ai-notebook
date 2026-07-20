@@ -49,9 +49,19 @@
     font: inherit; color: inherit; background: none; border: none; cursor: pointer;
   }
   .back { display: inline-block; color: var(--muted); font-size: 15px; padding: 4px 0; margin-bottom: 6px; }
-  .list-item {
-    display: block; padding: 15px 2px; border-bottom: 1px solid var(--hairline);
+  .project-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 13px 0; border-bottom: 1px solid var(--hairline);
+  }
+  .project-row .list-item {
+    flex: 1; min-width: 0; padding: 2px 0;
     font-size: 19px; font-family: Georgia, serif;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .quick-add {
+    flex: none; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+    border: 1px solid var(--hairline); border-radius: 50%;
+    font-size: 19px; color: var(--muted); line-height: 1;
   }
   .big-btn {
     display: block; width: 100%; text-align: center;
@@ -62,13 +72,27 @@
   .quiet-btn { color: var(--muted); font-size: 15px; padding: 8px 0; }
   .quiet-btn:disabled { opacity: .5; }
   .row { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
-  .day-label {
-    margin: 22px 0 4px; font-size: 13px; text-transform: uppercase;
+  .section-label {
+    margin: 24px 0 6px; font-size: 12px; text-transform: uppercase;
     letter-spacing: .08em; color: var(--muted);
   }
-  .entry-card { display: block; padding: 10px 2px 12px; border-bottom: 1px solid var(--hairline); }
-  .entry-card .bullet { display: flex; gap: 9px; }
+  .day-label {
+    margin: 12px 0 2px; font-size: 11px; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--muted);
+  }
+  .entry-card { display: block; padding: 6px 2px 7px; border-bottom: 1px solid var(--hairline); }
+  .entry-card .bullet { display: flex; gap: 8px; font-size: 15px; line-height: 1.4; }
   .entry-card .bullet::before { content: "•"; color: var(--accent); }
+  .insights {
+    background: var(--card); border: 1px solid var(--hairline); border-radius: 14px;
+    padding: 4px 16px; margin: 18px 0 8px;
+  }
+  .stat-block { padding: 14px 0; border-bottom: 1px solid var(--hairline); }
+  .stat-block:last-of-type { border-bottom: none; }
+  .stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 4px; }
+  .stat-value { font-family: Georgia, serif; font-size: 19px; line-height: 1.4; }
+  .stat-value.most::before { content: "↑ "; color: var(--accent); }
+  .stat-value.least::before { content: "↓ "; color: var(--muted); }
   textarea, input[type=text], input[type=password] {
     width: 100%; font: inherit; color: var(--ink);
     background: var(--card); border: 1px solid var(--hairline); border-radius: 12px;
@@ -191,9 +215,40 @@ function notesContext(projectId) {
   ).join("\n\n");
 }
 
+function generateInsightsInBackground(projectId, forCount) {
+  if (mem.insightsInFlight[projectId] || !apiKey()) return;
+  const notes = notesContext(projectId);
+  if (!notes) return;
+  mem.insightsInFlight[projectId] = true;
+  claude(
+    "You analyze a collection of practice-journal entries for one project. Identify two things, based ONLY on " +
+    "patterns actually described in the notes — never invent a claim the notes don't support: " +
+    "MOST — the practice, technique, or approach that has produced the clearest positive results; " +
+    "LEAST — the practice, technique, or approach that has produced the weakest or most inconsistent results, " +
+    "or a recurring struggle. Reply in exactly this format, two lines, nothing else:\n" +
+    "MOST: <short phrase, under 10 words>\nLEAST: <short phrase, under 10 words>",
+    [{ role: "user", content: notes }],
+    300
+  ).then(raw => {
+    let most = "", least = "";
+    for (const line of raw.split("\n").map(l => l.trim())) {
+      if (/^MOST:/i.test(line)) most = line.replace(/^MOST:\s*/i, "");
+      else if (/^LEAST:/i.test(line)) least = line.replace(/^LEAST:\s*/i, "");
+    }
+    if (most && least) {
+      const d = db();
+      const p = d.projects.find(p => p.id === projectId);
+      if (p) { p.insights = { most, least, forCount }; saveDb(d); }
+    }
+  }).catch(() => {}).finally(() => {
+    delete mem.insightsInFlight[projectId];
+    render(); // single render after the in-flight flag clears, so "Updating…" never sticks
+  });
+}
+
 /* ---------- router ---------- */
 
-const mem = { drafts: {}, deeper: {}, asks: {} }; // per-session state, keyed by project id
+const mem = { drafts: {}, deeper: {}, asks: {}, insightsInFlight: {} }; // per-session state, keyed by project id
 
 function route() {
   const h = location.hash.replace(/^#\/?/, "");
@@ -223,7 +278,10 @@ function el(html) {
 function viewProjects() {
   const d = db();
   const items = d.projects.map(p =>
-    '<a class="list-item" href="#/p/' + p.id + '">' + esc(p.name) + "</a>"
+    '<div class="project-row">' +
+      '<a class="list-item" href="#/p/' + p.id + '">' + esc(p.name) + "</a>" +
+      '<a class="quick-add" href="#/p/' + p.id + '/new" aria-label="New entry in ' + esc(p.name) + '">+</a>' +
+    "</div>"
   ).join("");
 
   const v = el(
@@ -305,13 +363,44 @@ function viewProject(projectId) {
       esc(e.summary || firstSentence(e.text)) + "</span></span></a>";
   }
 
+  const stale = !project.insights || project.insights.forCount !== entries.length;
+  const generating = !!mem.insightsInFlight[projectId];
+  let insightsHtml = "";
+  if (project.insights) {
+    insightsHtml =
+      '<div class="insights">' +
+        '<div class="stat-block"><div class="stat-label">Most success</div><div class="stat-value most">' +
+          esc(project.insights.most) + "</div></div>" +
+        '<div class="stat-block"><div class="stat-label">Least success</div><div class="stat-value least">' +
+          esc(project.insights.least) + "</div></div>" +
+      "</div>" +
+      (generating
+        ? '<p class="hint">Updating insights…</p>'
+        : '<button class="quiet-btn" id="refreshInsights">↻ Refresh insights</button>');
+  } else if (!apiKey()) {
+    if (entries.length >= 2) insightsHtml = '<p class="hint">Add your API key on the home screen to see what’s working.</p>';
+  } else if (entries.length >= 2) {
+    insightsHtml = '<p class="hint">Finding what’s working…</p>';
+  }
+
+  if (apiKey() && entries.length >= 2 && stale && !generating) generateInsightsInBackground(projectId, entries.length);
+
   const v = el(
     '<a class="back" href="#/">‹ My Notebook</a>' +
     "<h1>" + esc(project.name) + "</h1>" +
     '<a class="big-btn" href="#/p/' + projectId + '/new">+ New Entry</a>' +
+    insightsHtml +
     '<div class="row"><span></span><a class="quiet-btn" href="#/p/' + projectId + '/ask">Ask AI</a></div>' +
-    (listHtml || '<p class="empty">No entries yet. How did practice go?</p>')
+    (entries.length ? '<div class="section-label">Entries</div>' + listHtml
+      : '<p class="empty">No entries yet. How did practice go?</p>')
   );
+
+  const refreshBtn = v.querySelector("#refreshInsights");
+  if (refreshBtn) refreshBtn.onclick = () => {
+    generateInsightsInBackground(projectId, entries.length);
+    render(); // reflect the now-true insightsInFlight flag immediately
+  };
+
   return v;
 }
 
