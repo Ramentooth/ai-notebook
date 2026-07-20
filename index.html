@@ -93,6 +93,23 @@
   .stat-value { font-family: Georgia, serif; font-size: 19px; line-height: 1.4; }
   .stat-value.most::before { content: "↑ "; color: var(--accent); }
   .stat-value.least::before { content: "↓ "; color: var(--muted); }
+  .blocker-row { display: flex; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--hairline); }
+  .blocker-row:last-child { border-bottom: none; }
+  .blocker-num { color: var(--accent); font-family: Georgia, serif; font-size: 18px; flex: none; }
+  .blocker-text { font-family: Georgia, serif; font-size: 17px; line-height: 1.45; }
+  .ex-list { margin: 8px 0 4px; padding-left: 18px; font-size: 15px; }
+  .ex-list li { margin: 3px 0; }
+  .practice-meta { font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .practice-why { font-size: 13px; color: var(--muted); font-style: italic; margin-top: 6px; }
+  .start-btn {
+    display: inline-block; background: var(--accent); color: #fff;
+    border-radius: 999px; padding: 8px 18px; font-size: 15px; font-weight: 600; margin-top: 10px;
+  }
+  .field-label {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--muted); margin: 16px 0 6px;
+  }
+  textarea.small { min-height: 16vh; }
   textarea, input[type=text], input[type=password] {
     width: 100%; font: inherit; color: var(--ink);
     background: var(--card); border: 1px solid var(--hairline); border-radius: 12px;
@@ -195,8 +212,10 @@ function summarizeInBackground(entryId) {
   const d = db();
   const entry = d.entries.find(e => e.id === entryId);
   if (!entry || !apiKey()) return;
+  const proj = d.projects.find(p => p.id === entry.projectId);
+  const kind = proj && proj.kind === "journal" ? "daily-reflection journal entry" : "practice-journal entry";
   claude(
-    "You summarize one practice-journal entry. Reply with a very short fragment (under 8 words, not a full sentence) naming the single most useful, concrete takeaway the writer should remember. No preamble, no quotes, no bullet character, no trailing period.",
+    "You summarize one " + kind + ". Reply with a very short fragment (under 8 words, not a full sentence) naming the single most useful, concrete takeaway the writer should remember. No preamble, no quotes, no bullet character, no trailing period.",
     [{ role: "user", content: entry.text }],
     200
   ).then(summary => {
@@ -219,26 +238,41 @@ function generateInsightsInBackground(projectId, forCount) {
   if (mem.insightsInFlight[projectId] || !apiKey()) return;
   const notes = notesContext(projectId);
   if (!notes) return;
+  const isJournal = (db().projects.find(p => p.id === projectId) || {}).kind === "journal";
   mem.insightsInFlight[projectId] = true;
-  claude(
-    "You analyze a collection of practice-journal entries for one project. Identify two things, based ONLY on " +
-    "patterns actually described in the notes — never invent a claim the notes don't support: " +
-    "MOST — the practice, technique, or approach that has produced the clearest positive results; " +
-    "LEAST — the practice, technique, or approach that has produced the weakest or most inconsistent results, " +
-    "or a recurring struggle. Reply in exactly this format, two lines, nothing else:\n" +
-    "MOST: <short phrase, under 10 words>\nLEAST: <short phrase, under 10 words>",
-    [{ role: "user", content: notes }],
-    300
-  ).then(raw => {
-    let most = "", least = "";
-    for (const line of raw.split("\n").map(l => l.trim())) {
-      if (/^MOST:/i.test(line)) most = line.replace(/^MOST:\s*/i, "");
-      else if (/^LEAST:/i.test(line)) least = line.replace(/^LEAST:\s*/i, "");
-    }
-    if (most && least) {
-      const d = db();
-      const p = d.projects.find(p => p.id === projectId);
-      if (p) { p.insights = { most, least, forCount }; saveDb(d); }
+
+  const system = isJournal
+    ? "You analyze a person's daily reflection journal. Entries contain goals they set and honest reviews of " +
+      "whether they met their previous goals. Identify the top three recurring reasons this person doesn't get " +
+      "things done, grounded ONLY in what the entries actually say — never invent a claim the notes don't " +
+      "support. Be direct, like a no-nonsense coach naming the real pattern. Reply in exactly this format, " +
+      "three lines, nothing else:\n1: <reason, under 10 words>\n2: <reason, under 10 words>\n3: <reason, under 10 words>"
+    : "You analyze a collection of practice-journal entries for one project. Identify two things, based ONLY on " +
+      "patterns actually described in the notes — never invent a claim the notes don't support: " +
+      "MOST — the practice, technique, or approach that has produced the clearest positive results; " +
+      "LEAST — the practice, technique, or approach that has produced the weakest or most inconsistent results, " +
+      "or a recurring struggle. Reply in exactly this format, two lines, nothing else:\n" +
+      "MOST: <short phrase, under 10 words>\nLEAST: <short phrase, under 10 words>";
+
+  claude(system, [{ role: "user", content: notes }], 300).then(raw => {
+    const lines = raw.split("\n").map(l => l.trim());
+    const d = db();
+    const p = d.projects.find(p => p.id === projectId);
+    if (!p) return;
+    if (isJournal) {
+      const blockers = [];
+      for (const line of lines) {
+        const m = line.match(/^[123]:\s*(.+)/);
+        if (m) blockers.push(m[1]);
+      }
+      if (blockers.length >= 2) { p.insights = { blockers, forCount }; saveDb(d); }
+    } else {
+      let most = "", least = "";
+      for (const line of lines) {
+        if (/^MOST:/i.test(line)) most = line.replace(/^MOST:\s*/i, "");
+        else if (/^LEAST:/i.test(line)) least = line.replace(/^LEAST:\s*/i, "");
+      }
+      if (most && least) { p.insights = { most, least, forCount }; saveDb(d); }
     }
   }).catch(() => {}).finally(() => {
     delete mem.insightsInFlight[projectId];
@@ -246,9 +280,55 @@ function generateInsightsInBackground(projectId, forCount) {
   });
 }
 
+function generatePracticeInBackground(projectId, forCount) {
+  if (mem.practiceInFlight[projectId] || !apiKey()) return;
+  const notes = notesContext(projectId);
+  if (!notes) return;
+  mem.practiceInFlight[projectId] = true;
+  claude(
+    "You are a coach inside the user's practice notebook. Read their entries and find recurring problems, " +
+    "successful experiments, and unfinished ideas. Recommend ONE small, focused next practice session — not a " +
+    "lesson plan. Ground every part in what the notes actually say. Reply in exactly this format, nothing else:\n" +
+    "FOCUS: <the single focus, under 12 words>\n" +
+    "EXERCISES: <2-3 short exercises separated by \" | \">\n" +
+    "DURATION: <minutes as a number only, between 5 and 45>\n" +
+    "SUCCESS: <one observable success criterion, under 15 words>\n" +
+    "WHY: <one sentence tying this to their own notes>",
+    [{ role: "user", content: notes }],
+    400
+  ).then(raw => {
+    const get = tag => {
+      const m = raw.match(new RegExp("^" + tag + ":\\s*(.+)$", "mi"));
+      return m ? m[1].trim() : "";
+    };
+    const focus = get("FOCUS");
+    const exercises = get("EXERCISES").split("|").map(s => s.trim()).filter(Boolean);
+    const duration = Math.min(45, Math.max(5, parseInt(get("DURATION"), 10) || 15));
+    const success = get("SUCCESS");
+    const why = get("WHY");
+    if (focus && exercises.length) {
+      const d = db();
+      const p = d.projects.find(p => p.id === projectId);
+      if (p) { p.practice = { focus, exercises, duration, success, why, forCount }; saveDb(d); }
+    }
+  }).catch(() => {}).finally(() => {
+    delete mem.practiceInFlight[projectId];
+    render();
+  });
+}
+
+function lastGoalsText(projectId) {
+  const es = db().entries
+    .filter(e => e.projectId === projectId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  if (!es.length) return "";
+  const m = es[0].text.match(/(?:^|\n)Goals:\n([\s\S]*?)(?:\n\n|$)/);
+  return m ? m[1].trim() : "";
+}
+
 /* ---------- router ---------- */
 
-const mem = { drafts: {}, deeper: {}, asks: {}, insightsInFlight: {} }; // per-session state, keyed by project id
+const mem = { drafts: {}, journalDrafts: {}, asks: {}, insightsInFlight: {}, practiceInFlight: {}, timers: {} }; // per-session state, keyed by project id
 
 function route() {
   const h = location.hash.replace(/^#\/?/, "");
@@ -277,17 +357,30 @@ function el(html) {
 
 function viewProjects() {
   const d = db();
-  const items = d.projects.map(p =>
+  const row = p =>
     '<div class="project-row">' +
       '<a class="list-item" href="#/p/' + p.id + '">' + esc(p.name) + "</a>" +
       '<a class="quick-add" href="#/p/' + p.id + '/new" aria-label="New entry in ' + esc(p.name) + '">+</a>' +
-    "</div>"
-  ).join("");
+    "</div>";
+
+  const journal = d.projects.find(p => p.kind === "journal");
+  const others = d.projects.filter(p => p.kind !== "journal");
+
+  const journalHtml = journal
+    ? '<div class="section-label" style="margin-top:0">Overall</div>' + row(journal)
+    : "";
+  const othersHtml = others.length
+    ? (journal ? '<div class="section-label">Projects</div>' : "") + others.map(row).join("")
+    : "";
 
   const v = el(
     "<h1>My Notebook</h1>" +
-    (items || '<p class="empty">A blank notebook. Add your first project.</p>') +
-    '<button class="quiet-btn" id="newProject" style="margin-top:16px">+ New Project</button>' +
+    journalHtml + othersHtml +
+    (!journal && !others.length ? '<p class="empty">A blank notebook. Add your first project.</p>' : "") +
+    '<div class="row" style="justify-content:flex-start;gap:22px;margin-top:16px">' +
+      '<button class="quiet-btn" id="newProject">+ New Project</button>' +
+      (journal ? "" : '<button class="quiet-btn" id="newJournal">+ Daily notebook</button>') +
+    "</div>" +
     '<div id="newProjectBox"></div>' +
     '<div class="footer">' +
       '<button id="keyBtn">' + (apiKey() ? "AI on · change key" : "Enable AI · add key") + "</button>" +
@@ -296,10 +389,12 @@ function viewProjects() {
     '<div id="keyBox"></div>'
   );
 
-  v.querySelector("#newProject").onclick = () => {
+  const showCreate = kind => {
     const box = v.querySelector("#newProjectBox");
     box.innerHTML =
-      '<form><input type="text" placeholder="Project name" enterkeyhint="done" style="margin-top:10px">' +
+      '<form><input type="text" placeholder="' +
+      (kind === "journal" ? "Name your daily notebook — e.g. My Day" : "Project name") +
+      '" enterkeyhint="done" style="margin-top:10px">' +
       '<button class="quiet-btn" type="submit">Create</button></form>';
     const input = box.querySelector("input");
     input.focus();
@@ -308,11 +403,15 @@ function viewProjects() {
       if (!input.value.trim()) return;
       const d2 = db();
       const p = { id: uid(), name: input.value.trim(), createdAt: new Date().toISOString() };
+      if (kind === "journal") p.kind = "journal";
       d2.projects.push(p);
       saveDb(d2);
       location.hash = "#/p/" + p.id;
     };
   };
+  v.querySelector("#newProject").onclick = () => showCreate();
+  const journalBtn = v.querySelector("#newJournal");
+  if (journalBtn) journalBtn.onclick = () => showCreate("journal");
 
   v.querySelector("#keyBtn").onclick = () => {
     const box = v.querySelector("#keyBox");
@@ -363,36 +462,82 @@ function viewProject(projectId) {
       esc(e.summary || firstSentence(e.text)) + "</span></span></a>";
   }
 
-  const stale = !project.insights || project.insights.forCount !== entries.length;
+  const isJournal = project.kind === "journal";
+  const hasInsights = isJournal
+    ? !!(project.insights && project.insights.blockers)
+    : !!(project.insights && project.insights.most);
+  const stale = !hasInsights || project.insights.forCount !== entries.length;
   const generating = !!mem.insightsInFlight[projectId];
+
   let insightsHtml = "";
-  if (project.insights) {
-    insightsHtml =
-      '<div class="insights">' +
-        '<div class="stat-block"><div class="stat-label">Most success</div><div class="stat-value most">' +
-          esc(project.insights.most) + "</div></div>" +
-        '<div class="stat-block"><div class="stat-label">Least success</div><div class="stat-value least">' +
-          esc(project.insights.least) + "</div></div>" +
-      "</div>" +
-      (generating
-        ? '<p class="hint">Updating insights…</p>'
-        : '<button class="quiet-btn" id="refreshInsights">↻ Refresh insights</button>');
+  if (hasInsights) {
+    insightsHtml = isJournal
+      ? '<div class="insights">' +
+          '<div class="card-title stat-label" style="padding-top:14px">Why things don’t get done</div>' +
+          project.insights.blockers.map((b, i) =>
+            '<div class="blocker-row"><span class="blocker-num">' + (i + 1) + '</span>' +
+            '<span class="blocker-text">' + esc(b) + "</span></div>"
+          ).join("") +
+        "</div>"
+      : '<div class="insights">' +
+          '<div class="stat-block"><div class="stat-label">Most success</div><div class="stat-value most">' +
+            esc(project.insights.most) + "</div></div>" +
+          '<div class="stat-block"><div class="stat-label">Least success</div><div class="stat-value least">' +
+            esc(project.insights.least) + "</div></div>" +
+        "</div>";
+    insightsHtml += generating
+      ? '<p class="hint">Updating insights…</p>'
+      : '<button class="quiet-btn" id="refreshInsights">↻ Refresh insights</button>';
   } else if (!apiKey()) {
     if (entries.length >= 2) insightsHtml = '<p class="hint">Add your API key on the home screen to see what’s working.</p>';
   } else if (entries.length >= 2) {
-    insightsHtml = '<p class="hint">Finding what’s working…</p>';
+    insightsHtml = '<p class="hint">' + (isJournal ? "Looking for what blocks you…" : "Finding what’s working…") + "</p>";
   }
 
   if (apiKey() && entries.length >= 2 && stale && !generating) generateInsightsInBackground(projectId, entries.length);
+
+  // Next Practice card (regular projects only)
+  let practiceHtml = "";
+  const practice = project.practice;
+  const pGenerating = !!mem.practiceInFlight[projectId];
+  if (!isJournal && apiKey() && entries.length >= 1) {
+    if (practice) {
+      const timer = mem.timers[projectId];
+      practiceHtml =
+        '<div class="insights">' +
+          '<div class="stat-block">' +
+            '<div class="stat-label">Next practice · ~' + practice.duration + " min</div>" +
+            '<div class="stat-value">' + esc(practice.focus) + "</div>" +
+            '<ul class="ex-list">' + practice.exercises.map(x => "<li>" + esc(x) + "</li>").join("") + "</ul>" +
+            (practice.success ? '<div class="practice-meta">Done when: ' + esc(practice.success) + "</div>" : "") +
+            (practice.why ? '<div class="practice-why">' + esc(practice.why) + "</div>" : "") +
+            '<div class="row" style="justify-content:flex-start;gap:16px;align-items:center">' +
+              (timer
+                ? '<button class="start-btn" id="finishPractice">Finish & reflect</button>' +
+                  '<span class="practice-meta" id="practiceTimer" style="margin-top:10px"></span>'
+                : '<button class="start-btn" id="startPractice">Start · ' + practice.duration + " min</button>" +
+                  (pGenerating
+                    ? '<span class="practice-meta" style="margin-top:10px">Thinking…</span>'
+                    : '<button class="quiet-btn" id="newPractice" style="margin-top:10px">↻ New idea</button>')) +
+            "</div>" +
+          "</div>" +
+        "</div>";
+    } else {
+      practiceHtml = pGenerating
+        ? '<p class="hint">Planning your next practice…</p>'
+        : '<button class="quiet-btn" id="suggestPractice">✦ Suggest next practice</button>';
+    }
+  }
 
   const v = el(
     '<a class="back" href="#/">‹ My Notebook</a>' +
     "<h1>" + esc(project.name) + "</h1>" +
     '<a class="big-btn" href="#/p/' + projectId + '/new">+ New Entry</a>' +
     insightsHtml +
+    practiceHtml +
     '<div class="row"><span></span><a class="quiet-btn" href="#/p/' + projectId + '/ask">Ask AI</a></div>' +
     (entries.length ? '<div class="section-label">Entries</div>' + listHtml
-      : '<p class="empty">No entries yet. How did practice go?</p>')
+      : '<p class="empty">No entries yet. How did ' + (isJournal ? "today" : "practice") + " go?</p>")
   );
 
   const refreshBtn = v.querySelector("#refreshInsights");
@@ -400,6 +545,45 @@ function viewProject(projectId) {
     generateInsightsInBackground(projectId, entries.length);
     render(); // reflect the now-true insightsInFlight flag immediately
   };
+
+  const suggestBtn = v.querySelector("#suggestPractice");
+  if (suggestBtn) suggestBtn.onclick = () => {
+    generatePracticeInBackground(projectId, entries.length);
+    render();
+  };
+  const newPracticeBtn = v.querySelector("#newPractice");
+  if (newPracticeBtn) newPracticeBtn.onclick = () => {
+    generatePracticeInBackground(projectId, entries.length);
+    render();
+  };
+  const startBtn = v.querySelector("#startPractice");
+  if (startBtn) startBtn.onclick = () => {
+    mem.timers[projectId] = { endsAt: Date.now() + practice.duration * 60000 };
+    render();
+  };
+  const finishBtn = v.querySelector("#finishPractice");
+  if (finishBtn) finishBtn.onclick = () => {
+    delete mem.timers[projectId];
+    if (!mem.drafts[projectId]) mem.drafts[projectId] = "Practiced: " + practice.focus + "\n\n";
+    location.hash = "#/p/" + projectId + "/new";
+  };
+
+  const timerSpan = v.querySelector("#practiceTimer");
+  if (timerSpan) {
+    const update = () => {
+      const t = mem.timers[projectId];
+      if (!t) return false;
+      const left = t.endsAt - Date.now();
+      timerSpan.textContent = left > 0
+        ? Math.floor(left / 60000) + ":" + String(Math.floor(left / 1000) % 60).padStart(2, "0") + " left"
+        : "Time — reflect when ready";
+      return true;
+    };
+    update(); // fill immediately (view isn't attached to the document yet — don't gate on that here)
+    const iv = setInterval(() => {
+      if (!document.body.contains(timerSpan) || !update()) clearInterval(iv);
+    }, 1000);
+  }
 
   return v;
 }
@@ -409,14 +593,11 @@ function viewProject(projectId) {
 function viewNewEntry(projectId) {
   const project = db().projects.find(p => p.id === projectId);
   if (!project) { location.hash = "#/"; return el(""); }
+  if (project.kind === "journal") return viewJournalEntry(project);
 
-  const questions = mem.deeper[projectId] || [];
   const v = el(
     '<a class="back" href="#/p/' + projectId + '">‹ ' + esc(project.name) + "</a>" +
     "<h2>How did it go today?</h2>" +
-    '<div id="questions">' +
-      questions.map(q => '<div class="ai-question">' + esc(q) + "</div>").join("") +
-    "</div>" +
     '<textarea id="draft" placeholder="Speak or type here"></textarea>' +
     '<div class="row" style="margin-top:12px">' +
       '<button class="quiet-btn" id="deeper">Prompt Me Deeper</button>' +
@@ -441,12 +622,20 @@ function viewNewEntry(projectId) {
     msg.textContent = "";
     try {
       const q = await claude(
-        "The user is journaling about a practice session. Ask ONE thoughtful, specific follow-up question that builds directly on what they wrote — the kind a great coach would ask. Never ask a generic question. Reply with only the question.",
+        "The user is journaling about a practice session. The draft may already contain earlier Q:/A: exchanges — " +
+        "read the whole thing. Ask ONE thoughtful, specific follow-up question that builds directly on what they " +
+        "wrote — the kind a great coach would ask. Never ask a generic question, never repeat an earlier question. " +
+        "Reply with only the question.",
         [{ role: "user", content: ta.value }],
         150
       );
-      (mem.deeper[projectId] = mem.deeper[projectId] || []).push(q);
-      render();
+      // Drop the question into the draft itself so the user replies inline
+      const base = ta.value.replace(/\s+$/, "");
+      ta.value = (base ? base + "\n\n" : "") + "Q: " + q + "\nA: ";
+      mem.drafts[projectId] = ta.value;
+      ta.focus();
+      ta.selectionStart = ta.selectionEnd = ta.value.length;
+      ta.scrollTop = ta.scrollHeight;
     } catch (e) {
       msg.textContent = "Couldn't reach the AI: " + e.message;
     }
@@ -457,18 +646,82 @@ function viewNewEntry(projectId) {
   v.querySelector("#save").onclick = () => {
     const text = ta.value.trim();
     if (!text) return;
-    const d = db();
-    const entry = {
-      id: uid(), projectId, text,
-      createdAt: new Date().toISOString(),
-      summary: firstSentence(text), // placeholder until AI summary lands
-    };
-    d.entries.push(entry);
-    saveDb(d);
-    delete mem.drafts[projectId];
-    delete mem.deeper[projectId];
-    location.hash = "#/p/" + projectId;
-    summarizeInBackground(entry.id);
+    saveEntry(projectId, text);
+  };
+
+  return v;
+}
+
+function saveEntry(projectId, text) {
+  const d = db();
+  // placeholder until the AI summary lands; for structured journal entries use the first goal line
+  const placeholder = text.startsWith("Goals:\n")
+    ? firstSentence(text.slice(7).split("\n")[0])
+    : firstSentence(text);
+  const entry = {
+    id: uid(), projectId, text,
+    createdAt: new Date().toISOString(),
+    summary: placeholder,
+  };
+  d.entries.push(entry);
+  saveDb(d);
+  delete mem.drafts[projectId];
+  delete mem.journalDrafts[projectId];
+  location.hash = "#/p/" + projectId;
+  summarizeInBackground(entry.id);
+}
+
+/* ---------- daily notebook entry ---------- */
+
+function viewJournalEntry(project) {
+  const pid = project.id;
+  const jd = mem.journalDrafts[pid] = mem.journalDrafts[pid] || { goals: "", review: "", notes: "" };
+  const prevGoals = lastGoalsText(pid);
+
+  const v = el(
+    '<a class="back" href="#/p/' + pid + '">‹ ' + esc(project.name) + "</a>" +
+    "<h2>How did today go?</h2>" +
+    '<div class="field-label">Three things you want to accomplish</div>' +
+    '<textarea id="goals" class="small" placeholder="1.&#10;2.&#10;3."></textarea>' +
+    (prevGoals
+      ? '<div class="field-label">Last time you set</div>' +
+        '<div class="ai-question">' + esc(prevGoals).replace(/\n/g, "<br>") + "</div>" +
+        '<div class="field-label">Did you do them? Why, or why not?</div>'
+      : '<div class="field-label">How did today go? What got in the way?</div>') +
+    '<textarea id="review" class="small" placeholder="Be honest."></textarea>' +
+    '<div id="notesWrap" style="display:none">' +
+      '<div class="field-label">Anything else about today? (optional)</div>' +
+      '<textarea id="notes" class="small" placeholder="Speak or type here"></textarea>' +
+    "</div>" +
+    '<div class="row" style="margin-top:14px"><span></span>' +
+      '<button class="big-btn" id="save" style="width:auto;margin:0;padding:12px 26px">Save</button></div>' +
+    '<div class="hint" id="msg"></div>'
+  );
+
+  const goalsTa = v.querySelector("#goals");
+  const reviewTa = v.querySelector("#review");
+  const notesTa = v.querySelector("#notes");
+  const notesWrap = v.querySelector("#notesWrap");
+  goalsTa.value = jd.goals; reviewTa.value = jd.review; notesTa.value = jd.notes;
+
+  const syncNotesVisibility = () => {
+    if (goalsTa.value.trim() && reviewTa.value.trim()) notesWrap.style.display = "";
+  };
+  syncNotesVisibility();
+  goalsTa.oninput = () => { jd.goals = goalsTa.value; syncNotesVisibility(); };
+  reviewTa.oninput = () => { jd.review = reviewTa.value; syncNotesVisibility(); };
+  notesTa.oninput = () => { jd.notes = notesTa.value; };
+  if (!jd.goals) setTimeout(() => goalsTa.focus(), 50);
+
+  v.querySelector("#save").onclick = () => {
+    const goals = goalsTa.value.trim(), review = reviewTa.value.trim(), notes = notesTa.value.trim();
+    if (!goals || !review) {
+      v.querySelector("#msg").textContent = "Fill in your goals and the review first — that's the whole point.";
+      return;
+    }
+    let text = "Goals:\n" + goals + "\n\nReview:\n" + review;
+    if (notes) text += "\n\nNotes:\n" + notes;
+    saveEntry(pid, text);
   };
 
   return v;
@@ -507,12 +760,20 @@ function viewAsk(projectId) {
   if (!project) { location.hash = "#/"; return el(""); }
 
   const convo = (mem.asks[projectId] = mem.asks[projectId] || []);
-  const suggestions = [
-    "What patterns do you notice?",
-    "What should I focus on today?",
-    "What advice have I already given myself?",
-    "What should I experiment with next?",
-  ];
+  const isJournal = project.kind === "journal";
+  const suggestions = isJournal
+    ? [
+        "What keeps blocking me?",
+        "Where am I making excuses?",
+        "What should I commit to tomorrow?",
+        "Am I actually improving?",
+      ]
+    : [
+        "What patterns do you notice?",
+        "What should I focus on today?",
+        "What advice have I already given myself?",
+        "What should I experiment with next?",
+      ];
 
   const v = el(
     '<a class="back" href="#/p/' + projectId + '">‹ ' + esc(project.name) + "</a>" +
@@ -544,8 +805,13 @@ function viewAsk(projectId) {
         { role: "user", content: t.q },
         { role: "assistant", content: t.a },
       ]);
+      const persona = isJournal
+        ? 'You are a demanding but caring self-improvement coach inside the user\'s daily notebook "' + project.name + '". ' +
+          "Hold them accountable: name avoidance patterns and excuses plainly, don't soften real problems, and always " +
+          "push toward one specific commitment. Stay warm but direct — a coach who believes in them, not a critic. "
+        : 'You are the AI inside the user\'s practice notebook for "' + project.name + '". ';
       const a = await claude(
-        'You are the AI inside the user\'s practice notebook for "' + project.name + '". ' +
+        persona +
         "Answer using ONLY the notes below. Reference specific past entries naturally by their date " +
         '(e.g. "On July 12 you noted…"). Be concrete and brief. If the notes don\'t cover it, say so plainly.\n\n' +
         "NOTES:\n\n" + notes,
